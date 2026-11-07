@@ -185,10 +185,14 @@ final class VoiceNotePlayback: ObservableObject {
         stop()
         guard FileManager.default.fileExists(atPath: fileURL.path) else { throw CompassError.invalidAudio }
         let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playback, mode: .spokenAudio)
+        try session.setCategory(.playAndRecord, mode: .default,
+                                options: [.defaultToSpeaker, .allowBluetooth, .duckOthers])
         try session.setActive(true)
+        try? session.overrideOutputAudioPort(.speaker)
         let newPlayer = try AVAudioPlayer(contentsOf: fileURL)
         newPlayer.delegate = delegate
+        newPlayer.volume = 1.0
+        newPlayer.prepareToPlay()
         guard newPlayer.play() else { throw CompassError.invalidAudio }
         playback = newPlayer
         playingID = note.id
@@ -198,6 +202,7 @@ final class VoiceNotePlayback: ObservableObject {
         playback?.stop()
         playback = nil
         playingID = nil
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }
 

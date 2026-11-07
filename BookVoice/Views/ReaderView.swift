@@ -5,9 +5,11 @@ struct ReaderView: View {
     let bookID: UUID
     var initialPage: Int? = nil
     var initialHighlight: String? = nil
+
     @EnvironmentObject private var annotations: AnnotationStore
     @EnvironmentObject private var library: BookLibrary
     @EnvironmentObject private var player: BookSpeechPlayer
+
     @State private var document: PDFDocument?
     @State private var showSettings = false
     @State private var showPageJump = false
@@ -23,8 +25,21 @@ struct ReaderView: View {
     private var book: Book? { library.books.first(where: { $0.id == bookID }) }
     private var page: Int { player.currentPage }
 
-    // Keep body small: the SwiftUI type checker can time out on nested
-    // layouts with several sheets, toolbars and generic view modifiers.
+    private var currentQuoteCandidate: String {
+        let direct = selectedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !direct.isEmpty { return direct }
+        return player.spokenSentence.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var hasCurrentQuote: Bool { !currentQuoteCandidate.isEmpty }
+
+    private var hasSavedCurrentQuote: Bool {
+        guard hasCurrentQuote else { return false }
+        return annotations.annotations(for: bookID).contains {
+            $0.pageIndex == page && ($0.quoteText ?? "").trimmingCharacters(in: .whitespacesAndNewlines) == currentQuoteCandidate
+        }
+    }
+
     var body: some View {
         readerContent
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -42,7 +57,7 @@ struct ReaderView: View {
                 AnnotationEditorView(bookID: bookID, pageIndex: page, selectedText: quoteDraft)
             }
             .sheet(isPresented: $showVoiceNote) {
-                VoiceNoteSheet(bookID: bookID, pageIndex: page, quote: selectedText, annotationID: nil)
+                VoiceNoteSheet(bookID: bookID, pageIndex: page, quote: currentQuoteCandidate, annotationID: nil)
             }
             .sheet(isPresented: $showOCRQuote) {
                 if let document {
@@ -193,19 +208,12 @@ struct ReaderView: View {
             knowledgeControls
             playbackControls
             secondaryControls
-            if let annotationNotice {
-                Text(annotationNotice).font(.footnote).foregroundStyle(.secondary)
-            }
-            if let notice = player.notice {
-                Text(notice)
-                    .font(.footnote)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+            if let annotationNotice { noticeBanner(annotationNotice) }
+            if let notice = player.notice { noticeBanner(notice, tint: .orange) }
         }
-        .padding(.horizontal, 24)
-        .padding(.top, 16)
-        .padding(.bottom, 11)
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 10)
         .background(.regularMaterial)
         .overlay(alignment: .top) {
             Rectangle()
@@ -243,43 +251,74 @@ struct ReaderView: View {
                 .accessibilityLabel("Текущее предложение: \(player.spokenSentence)")
         }
         .padding(12)
-        .background(Color(uiColor: .secondarySystemGroupedBackground),
-                    in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
     }
 
     private var knowledgeControls: some View {
-        HStack(spacing: 8) {
-            Button { saveBookmark(player.spokenSentence.isEmpty ? selectedText : player.spokenSentence) } label: {
-                Label("Запомнить", systemImage: "bookmark.fill")
-            }
-            .disabled(player.spokenSentence.isEmpty && selectedText.isEmpty)
-            Button {
-                quoteDraft = selectedText.isEmpty ? player.spokenSentence : selectedText
-                if quoteDraft.isEmpty, let document, document.page(at: page)?.string?.isEmpty != false {
-                    showOCRQuote = true
-                } else {
-                    showAnnotationEditor = true
-                }
-            } label: {
-                Label("Цитата", systemImage: "text.quote")
-            }
-            Button { showVoiceNote = true } label: {
-                Label("Голос", systemImage: "mic")
-            }
+        HStack(spacing: 10) {
+            saveActionButton
+            quoteActionButton
+            voiceActionButton
         }
-        .font(.system(size: 12, weight: .medium))
+    }
+
+    private var saveActionButton: some View {
+        Button {
+            saveBookmark(currentQuoteCandidate)
+        } label: {
+            Label(hasSavedCurrentQuote ? "Сохранено" : "Запомнить",
+                  systemImage: hasSavedCurrentQuote ? "checkmark.circle.fill" : "bookmark.fill")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(hasSavedCurrentQuote ? .green : .blue)
+        .disabled(!hasCurrentQuote)
+    }
+
+    private var quoteActionButton: some View {
+        Button {
+            quoteDraft = currentQuoteCandidate
+            if quoteDraft.isEmpty, let document, document.page(at: page)?.string?.isEmpty != false {
+                showOCRQuote = true
+            } else {
+                showAnnotationEditor = true
+            }
+        } label: {
+            Label("Цитата", systemImage: "text.quote")
+                .frame(maxWidth: .infinity)
+        }
         .buttonStyle(.bordered)
-        .controlSize(.small)
+    }
+
+    private var voiceActionButton: some View {
+        Button {
+            showVoiceNote = true
+        } label: {
+            Label("Голос", systemImage: "mic")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.bordered)
     }
 
     private func saveBookmark(_ rawText: String) {
         let quote = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !quote.isEmpty else { annotationNotice = "Сначала выбери текст или запусти чтение."; return }
+        guard !quote.isEmpty else {
+            annotationNotice = "Сначала выбери текст или запусти чтение."
+            return
+        }
+        if hasSavedCurrentQuote {
+            annotationNotice = "Эта цитата уже сохранена"
+            return
+        }
         let item = BookAnnotation(bookID: bookID, pageIndex: page,
             quoteText: quote, comment: "", tags: [], isFavorite: false,
             locator: TextLocator(pageIndex: page, selectedText: quote, contextBefore: nil, contextAfter: nil))
-        do { try annotations.save(item); annotationNotice = "Цитата сохранена" }
-        catch { annotationNotice = "Ошибка: \(error.localizedDescription)" }
+        do {
+            try annotations.save(item)
+            annotationNotice = "Цитата сохранена"
+        } catch {
+            annotationNotice = "Ошибка: \(error.localizedDescription)"
+        }
     }
 
     private var playbackControls: some View {
@@ -352,6 +391,20 @@ struct ReaderView: View {
         .foregroundStyle(.secondary)
     }
 
+    private func noticeBanner(_ text: String, tint: Color = .green) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: tint == .green ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                .foregroundStyle(tint)
+            Text(text)
+                .font(.footnote.weight(.medium))
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: Capsule())
+    }
+
     private var sleepLabel: String {
         let remaining = player.sleepRemainingSeconds
         guard remaining > 0 else { return "Сон" }
@@ -361,104 +414,20 @@ struct ReaderView: View {
     private var statusText: String {
         switch player.state {
         case .stopped: return "Готов к чтению"
-        case .loading: return "Получаем текст страницы…"
-        case .speaking: return player.recognizedPage ? "Читаем распознанный текст" : "Сейчас читает"
+        case .loading: return "Готовим озвучивание"
+        case .speaking: return "Читаем распознанный текст"
         case .paused: return "Пауза"
         }
     }
 }
 
-private struct PDFPageViewer: UIViewRepresentable {
-    let document: PDFDocument
-    let pageIndex: Int
-    let sentence: String
-    @Binding var selectedText: String
-
-    final class Coordinator {
-        var current: PDFPageViewer
-        var observer: NSObjectProtocol?
-        init(current: PDFPageViewer) { self.current = current }
-        deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator(current: self) }
-
-    func makeUIView(context: Context) -> PDFView {
-        let view = PDFView()
-        view.autoScales = true
-        view.displayMode = .singlePage
-        view.displayDirection = .horizontal
-        view.backgroundColor = .secondarySystemGroupedBackground
-        view.document = document
-        let coordinator = context.coordinator
-        coordinator.observer = NotificationCenter.default.addObserver(
-            forName: .PDFViewSelectionChanged, object: view, queue: .main
-        ) { notification in
-            guard let pdfView = notification.object as? PDFView else { return }
-            let text = pdfView.currentSelection?.string ?? ""
-            DispatchQueue.main.async { coordinator.current.selectedText = text }
-        }
-        return view
-    }
-
-    func updateUIView(_ view: PDFView, context: Context) {
-        context.coordinator.current = self
-        if view.document !== document { view.document = document }
-        if let desiredPage = document.page(at: pageIndex), view.currentPage !== desiredPage {
-            view.clearSelection()
-            view.go(to: desiredPage)
-        }
-        updateHighlight(in: view)
-    }
-
-    private func updateHighlight(in view: PDFView) {
-        guard let page = document.page(at: pageIndex),
-              let pageText = page.string,
-              !pageText.isEmpty,
-              !sentence.isEmpty else {
-            view.highlightedSelections = nil
-            return
-        }
-
-        // PDFKit's character ranges are UTF-16 positions in the original page text.
-        // OCR-only images have no such positions; the sentence panel still works.
-        let words = sentence.split(whereSeparator: { $0.isWhitespace })
-        let source = pageText as NSString
-        var found = NSRange(location: NSNotFound, length: 0)
-        let minimum = min(words.count, 3)
-        let lengths = [words.count] + Array(stride(from: min(8, words.count), through: minimum, by: -1))
-        for length in lengths where length > 0 {
-            let prefix = words.prefix(length).map(String.init)
-            // Allow line breaks between words in PDF's original text layer.
-            let pattern = prefix.map { NSRegularExpression.escapedPattern(for: $0) }
-                .joined(separator: "\\s+")
-            guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
-                continue
-            }
-            if let match = expression.firstMatch(in: pageText, range: NSRange(location: 0, length: source.length)) {
-                found = match.range
-                break
-            }
-        }
-        guard found.location != NSNotFound, found.length > 0,
-              NSMaxRange(found) <= source.length,
-              let selection = page.selection(for: found) else {
-            view.highlightedSelections = nil
-            return
-        }
-        selection.color = UIColor.systemYellow.withAlphaComponent(0.4)
-        view.highlightedSelections = [selection]
-    }
-}
-
 private struct ContentUnavailableViewFallback: View {
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "doc.questionmark")
-                .font(.system(size: 40, weight: .thin))
-                .foregroundStyle(.secondary)
-            Text("Не удалось открыть PDF")
-                .font(.headline)
-        }
+        ContentUnavailableView(
+            "Книга не открылась",
+            systemImage: "doc.richtext",
+            description: Text("Проверь, что PDF по-прежнему существует в локальной библиотеке.")
+        )
+        .padding()
     }
 }
