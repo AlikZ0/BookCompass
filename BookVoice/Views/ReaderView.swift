@@ -266,12 +266,14 @@ struct ReaderView: View {
         Button {
             saveBookmark(currentQuoteCandidate)
         } label: {
-            Label(hasSavedCurrentQuote ? "Сохранено" : "Запомнить",
-                  systemImage: hasSavedCurrentQuote ? "checkmark.circle.fill" : "bookmark.fill")
-                .frame(maxWidth: .infinity)
+            quickActionLabel(
+                title: hasSavedCurrentQuote ? "Сохранено" : "Запомнить",
+                systemImage: hasSavedCurrentQuote ? "checkmark.circle.fill" : "bookmark",
+                tint: hasSavedCurrentQuote ? .green : .blue,
+                emphasized: hasSavedCurrentQuote
+            )
         }
-        .buttonStyle(.borderedProminent)
-        .tint(hasSavedCurrentQuote ? .green : .blue)
+        .buttonStyle(.plain)
         .disabled(!hasCurrentQuote)
     }
 
@@ -284,20 +286,18 @@ struct ReaderView: View {
                 showAnnotationEditor = true
             }
         } label: {
-            Label("Цитата", systemImage: "text.quote")
-                .frame(maxWidth: .infinity)
+            quickActionLabel(title: "Цитата", systemImage: "text.quote", tint: .blue)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.plain)
     }
 
     private var voiceActionButton: some View {
         Button {
             showVoiceNote = true
         } label: {
-            Label("Голос", systemImage: "mic")
-                .frame(maxWidth: .infinity)
+            quickActionLabel(title: "Голос", systemImage: "mic", tint: .blue)
         }
-        .buttonStyle(.bordered)
+        .buttonStyle(.plain)
     }
 
     private func saveBookmark(_ rawText: String) {
@@ -392,17 +392,48 @@ struct ReaderView: View {
     }
 
     private func noticeBanner(_ text: String, tint: Color = .green) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: text == "Цитата сохранена" ? "checkmark.circle.fill" : "info.circle.fill")
+        HStack(spacing: 10) {
+            Image(systemName: text == "Цитата сохранена" || text == "Эта цитата уже сохранена" ? "checkmark.circle.fill" : "info.circle.fill")
+                .font(.system(size: 16, weight: .semibold))
                 .foregroundStyle(tint)
             Text(text)
-                .font(.footnote.weight(.medium))
-                .foregroundStyle(.secondary)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
-        .background(Color(uiColor: .secondarySystemGroupedBackground), in: Capsule())
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(tint.opacity(0.14))
+        }
+    }
+
+    private func quickActionLabel(title: String, systemImage: String, tint: Color, emphasized: Bool = false) -> some View {
+        HStack(spacing: 7) {
+            Image(systemName: systemImage)
+                .font(.system(size: 14, weight: .semibold))
+            Text(title)
+                .font(.system(size: 14, weight: .semibold))
+                .lineLimit(1)
+                .minimumScaleFactor(0.84)
+        }
+        .foregroundStyle(tint)
+        .frame(maxWidth: .infinity)
+        .frame(height: 42)
+        .padding(.horizontal, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(emphasized ? tint.opacity(0.14) : Color(uiColor: .secondarySystemGroupedBackground))
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(emphasized ? tint.opacity(0.18) : Color.primary.opacity(0.06))
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var sleepLabel: String {
