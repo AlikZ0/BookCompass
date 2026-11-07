@@ -12,6 +12,8 @@ struct VoiceNoteSheet: View {
     let annotationID: UUID?
     @State private var comment = ""
     @State private var errorMessage: String?
+    @State private var errorTitle = "Ошибка записи"
+    @State private var confirmDiscard = false
     @State private var busy = false
 
     var body: some View {
@@ -34,7 +36,12 @@ struct VoiceNoteSheet: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(recorder.isRecording ? .red : .blue)
-                .disabled(busy)
+                .disabled(busy || (recorder.isRecording && recorder.seconds < 1))
+                if recorder.isRecording && recorder.seconds < 1 {
+                    Text("Для сохранения нужна запись длительностью хотя бы 1 секунду")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 Text("Для записи нужен доступ к микрофону. Файл M4A остаётся на iPhone.")
                     .font(.footnote).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 Spacer()
@@ -43,9 +50,21 @@ struct VoiceNoteSheet: View {
             .navigationTitle("Голосовая заметка")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .navigationBarTrailing) {
-                Button("Закрыть") { dismiss() }
+                Button("Закрыть") {
+                    if recorder.isRecording { confirmDiscard = true }
+                    else { dismiss() }
+                }
             } }
-            .alert("Не удалось сохранить", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            .confirmationDialog("Отменить голосовую заметку?", isPresented: $confirmDiscard) {
+                Button("Удалить несохранённую запись", role: .destructive) {
+                    recorder.discard()
+                    dismiss()
+                }
+                Button("Продолжить запись", role: .cancel) { }
+            } message: {
+                Text("Несохранённое аудио будет удалено.")
+            }
+            .alert(errorTitle, isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
                 Button("Понятно", role: .cancel) { errorMessage = nil }
             } message: { Text(errorMessage ?? "") }
             .onDisappear { recorder.discard() }
@@ -57,10 +76,20 @@ struct VoiceNoteSheet: View {
             saveRecording()
         } else {
             busy = true
-            player.pauseForRecording()  // Pause book TTS without resetting its page.
             Task { @MainActor in
-                do { try await recorder.start(in: store.audioDirectory) }
-                catch { errorMessage = error.localizedDescription }
+                do {
+                    try await recorder.start(in: store.audioDirectory) {
+                        player.pauseForRecording()  // Preserve the page; release TTS audio resources.
+                    }
+                }
+                catch {
+                    if case VoiceRecordingError.cancelled = error {
+                        // The sheet was dismissed while iOS was asking for mic permission.
+                    } else {
+                        errorTitle = "Не удалось начать запись"
+                        errorMessage = error.localizedDescription
+                    }
+                }
                 busy = false
             }
         }
@@ -86,10 +115,12 @@ struct VoiceNoteSheet: View {
             } catch {
                 // No orphan M4A even when the metadata write fails.
                 try? FileManager.default.removeItem(at: store.audioURL(for: voice))
+                errorTitle = "Не удалось сохранить"
                 errorMessage = error.localizedDescription
                 busy = false
             }
         } catch {
+            errorTitle = "Не удалось сохранить"
             errorMessage = error.localizedDescription
             busy = false
         }

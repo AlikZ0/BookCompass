@@ -148,13 +148,13 @@ final class BookSpeechPlayer: NSObject, ObservableObject {
         }
     }
 
-    /// Pause the book before recording a personal voice note, preserving the page.
-    /// Do not clear the reading position or sleep timer.
+    /// Stop the synthesizer before microphone recording: a paused utterance can
+    /// retain audio resources while AVAudioRecorder tries to activate its input.
+    /// The active book and page remain unchanged. Reading can restart at this page.
     func pauseForRecording() {
         switch state {
-        case .speaking: remotePause()
-        case .loading: stopAudio()
-        case .stopped, .paused: break
+        case .speaking, .loading, .paused: stopAudio()
+        case .stopped: break
         }
     }
 
