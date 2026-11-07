@@ -24,17 +24,19 @@ struct AnnotationDetailView: View {
             if let note {
                 content(note)
             } else {
-                ContentUnavailableView("Заметка удалена", systemImage: "note.text.badge.minus")
+                VStack(spacing: 12) {
+                    Image(systemName: "note.text.badge.minus")
+                        .font(.system(size: 36, weight: .light))
+                        .foregroundStyle(.secondary)
+                    Text("Заметка удалена")
+                        .font(.headline)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .navigationTitle("Заметка")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button("Изменить") { showEditor = true }
-                    .disabled(note == nil)
-            }
-        }
+        .toolbar { editToolbar }
         .sheet(isPresented: $showEditor) {
             if let note {
                 AnnotationEditorView(bookID: note.bookID, pageIndex: note.pageIndex, existing: note)
@@ -82,6 +84,14 @@ struct AnnotationDetailView: View {
         .onDisappear {
             voicePlayback.stop()
             quotePlayback.stop()
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var editToolbar: some ToolbarContent {
+        ToolbarItem(placement: .navigationBarTrailing) {
+            Button("Изменить") { showEditor = true }
+                .disabled(note == nil)
         }
     }
 
@@ -169,7 +179,7 @@ struct AnnotationDetailView: View {
                 }
                 HStack {
                     Label("\(note.isFavorite ? "Избранное" : "Заметка")", systemImage: note.isFavorite ? "star.fill" : "note.text")
-                        .foregroundStyle(note.isFavorite ? .yellow : .secondary)
+                        .foregroundStyle(note.isFavorite ? Color.yellow : Color.secondary)
                     Spacer()
                     Text(note.createdAt.formatted(date: .abbreviated, time: .omitted))
                         .font(.caption)

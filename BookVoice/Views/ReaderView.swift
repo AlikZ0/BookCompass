@@ -393,7 +393,7 @@ struct ReaderView: View {
 
     private func noticeBanner(_ text: String, tint: Color = .green) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: tint == .green ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+            Image(systemName: text == "Цитата сохранена" ? "checkmark.circle.fill" : "info.circle.fill")
                 .foregroundStyle(tint)
             Text(text)
                 .font(.footnote.weight(.medium))
@@ -421,13 +421,102 @@ struct ReaderView: View {
     }
 }
 
+private struct PDFPageViewer: UIViewRepresentable {
+    let document: PDFDocument
+    let pageIndex: Int
+    let sentence: String
+    @Binding var selectedText: String
+
+    final class Coordinator {
+        var current: PDFPageViewer
+        var observer: NSObjectProtocol?
+        init(current: PDFPageViewer) { self.current = current }
+        deinit { if let observer { NotificationCenter.default.removeObserver(observer) } }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(current: self) }
+
+    func makeUIView(context: Context) -> PDFView {
+        let view = PDFView()
+        view.autoScales = true
+        view.displayMode = .singlePage
+        view.displayDirection = .horizontal
+        view.backgroundColor = .secondarySystemGroupedBackground
+        view.document = document
+        let coordinator = context.coordinator
+        coordinator.observer = NotificationCenter.default.addObserver(
+            forName: .PDFViewSelectionChanged, object: view, queue: .main
+        ) { notification in
+            guard let pdfView = notification.object as? PDFView else { return }
+            let text = pdfView.currentSelection?.string ?? ""
+            DispatchQueue.main.async { coordinator.current.selectedText = text }
+        }
+        return view
+    }
+
+    func updateUIView(_ view: PDFView, context: Context) {
+        context.coordinator.current = self
+        if view.document !== document { view.document = document }
+        if let desiredPage = document.page(at: pageIndex), view.currentPage !== desiredPage {
+            view.clearSelection()
+            view.go(to: desiredPage)
+        }
+        updateHighlight(in: view)
+    }
+
+    private func updateHighlight(in view: PDFView) {
+        guard let page = document.page(at: pageIndex),
+              let pageText = page.string,
+              !pageText.isEmpty,
+              !sentence.isEmpty else {
+            view.highlightedSelections = nil
+            return
+        }
+
+        // PDFKit's character ranges are UTF-16 positions in the original page text.
+        // OCR-only images have no such positions; the sentence panel still works.
+        let words = sentence.split(whereSeparator: { $0.isWhitespace })
+        let source = pageText as NSString
+        var found = NSRange(location: NSNotFound, length: 0)
+        let minimum = min(words.count, 3)
+        let lengths = [words.count] + Array(stride(from: min(8, words.count), through: minimum, by: -1))
+        for length in lengths where length > 0 {
+            let prefix = words.prefix(length).map(String.init)
+            // Allow line breaks between words in PDF's original text layer.
+            let pattern = prefix.map { NSRegularExpression.escapedPattern(for: $0) }
+                .joined(separator: "\\s+")
+            guard let expression = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+                continue
+            }
+            if let match = expression.firstMatch(in: pageText, range: NSRange(location: 0, length: source.length)) {
+                found = match.range
+                break
+            }
+        }
+        guard found.location != NSNotFound, found.length > 0,
+              NSMaxRange(found) <= source.length,
+              let selection = page.selection(for: found) else {
+            view.highlightedSelections = nil
+            return
+        }
+        selection.color = UIColor.systemYellow.withAlphaComponent(0.4)
+        view.highlightedSelections = [selection]
+    }
+}
+
 private struct ContentUnavailableViewFallback: View {
     var body: some View {
-        ContentUnavailableView(
-            "Книга не открылась",
-            systemImage: "doc.richtext",
-            description: Text("Проверь, что PDF по-прежнему существует в локальной библиотеке.")
-        )
+        VStack(spacing: 12) {
+            Image(systemName: "doc.questionmark")
+                .font(.system(size: 38, weight: .light))
+                .foregroundStyle(.secondary)
+            Text("Книга не открылась")
+                .font(.headline)
+            Text("Проверь, что PDF по-прежнему существует в локальной библиотеке.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
         .padding()
     }
 }
